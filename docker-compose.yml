@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  smolagents:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      args:
+        INSTALL_EXTRAS: all
+    image: smolagents:latest
+    container_name: smolagents-app
+    restart: unless-stopped
+
+    ports:
+      - "${SMOLAGENTS_PORT:-8000}:8000"
+
+    environment:
+      # General configuration
+      - SMOLAGENTS_LOG_LEVEL=${SMOLAGENTS_LOG_LEVEL:-INFO}
+      - SMOLAGENTS_MAX_STEPS=${SMOLAGENTS_MAX_STEPS:-10}
+      - SMOLAGENTS_HOST=0.0.0.0
+      - SMOLAGENTS_PORT=8000
+
+      # API Keys (set these in .env file)
+      - HF_API_KEY=${HF_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - E2B_API_KEY=${E2B_API_KEY}
+
+      # Security
+      - SMOLAGENTS_USE_E2B=${SMOLAGENTS_USE_E2B:-false}
+
+      # Performance
+      - SMOLAGENTS_CACHE_ENABLED=${SMOLAGENTS_CACHE_ENABLED:-true}
+      - SMOLAGENTS_RATE_LIMIT_ENABLED=${SMOLAGENTS_RATE_LIMIT_ENABLED:-true}
+
+    volumes:
+      # Persist data and logs
+      - smolagents-data:/data
+      - smolagents-logs:/logs
+      # Configuration file (optional)
+      - ./config/smolagents.yaml:/app/smolagents.yaml:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    networks:
+      - smolagents-network
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+
+    # Read-only root filesystem (except for specific directories)
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.cache
+
+  # Optional: Redis for distributed caching
+  redis:
+    image: redis:7-alpine
+    container_name: smolagents-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - smolagents-redis-data:/data
+    networks:
+      - smolagents-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - with-redis
+
+  # Optional: Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: smolagents-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/ssl:/etc/nginx/ssl:ro
+      - smolagents-logs:/var/log/nginx
+    depends_on:
+      - smolagents
+    networks:
+      - smolagents-network
+    profiles:
+      - with-nginx
+
+  # Optional: Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: smolagents-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - smolagents-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - smolagents-network
+    profiles:
+      - monitoring
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: smolagents-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - smolagents-grafana-data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - smolagents-network
+    profiles:
+      - monitoring
+
+volumes:
+  smolagents-data:
+    driver: local
+  smolagents-logs:
+    driver: local
+  smolagents-redis-data:
+    driver: local
+  smolagents-prometheus-data:
+    driver: local
+  smolagents-grafana-data:
+    driver: local
+
+networks:
+  smolagents-network:
+    driver: bridge

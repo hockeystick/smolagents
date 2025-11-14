@@ -1,0 +1,76 @@
+# Multi-stage production Dockerfile for smolagents
+# Stage 1: Builder
+FROM python:3.11-slim as builder
+
+# Set build arguments
+ARG INSTALL_EXTRAS="all"
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy only requirements first for better caching
+WORKDIR /app
+COPY pyproject.toml ./
+COPY README.md ./
+COPY src/ ./src/
+
+# Install dependencies
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -e ".[$INSTALL_EXTRAS]"
+
+# Stage 2: Runtime
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash smolagents && \
+    mkdir -p /app /data /logs && \
+    chown -R smolagents:smolagents /app /data /logs
+
+# Copy virtual environment from builder
+COPY --from=builder --chown=smolagents:smolagents /opt/venv /opt/venv
+
+# Copy application code
+WORKDIR /app
+COPY --chown=smolagents:smolagents . .
+
+# Switch to non-root user
+USER smolagents
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data /app/.cache
+
+# Set volumes for data persistence
+VOLUME ["/data", "/logs"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${SMOLAGENTS_PORT:-8000}/health || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Default command (can be overridden)
+CMD ["python", "-m", "smolagents.server"]

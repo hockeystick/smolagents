@@ -1,0 +1,65 @@
+# Example configuration for smolagents
+# Copy this file to smolagents.yaml and customize for your needs
+
+# Retry configuration for API calls and operations
+retry:
+  enabled: true
+  max_retries: 3
+  initial_delay: 1.0
+  max_delay: 60.0
+  backoff_factor: 2.0
+
+# Rate limiting configuration
+rate_limit:
+  enabled: true
+  max_calls: 100
+  time_window: 60.0  # seconds
+
+# Caching configuration
+cache:
+  enabled: true
+  max_size: 128
+  ttl: 3600.0  # 1 hour in seconds
+
+# Security settings
+security:
+  use_e2b: false  # Set to true for sandboxed execution
+  allowed_imports:
+    - numpy
+    - pandas
+    - math
+    - datetime
+    - json
+    - re
+  block_dangerous_patterns: true
+  audit_log_enabled: true
+  audit_log_path: ./logs/audit.log
+
+# Monitoring and logging
+monitoring:
+  log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  log_file: ./logs/smolagents.log
+  metrics_enabled: true
+  telemetry_enabled: false
+
+# Agent behavior
+agent:
+  max_steps: 6
+  planning_interval: null  # Set to enable planning (e.g., 3 for every 3 steps)
+  add_base_tools: false
+  provide_run_summary: false
+
+# Server configuration (for API deployment)
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1
+  timeout: 300
+  health_check_path: /health
+
+# API keys are loaded from environment variables:
+# - HF_API_KEY or HUGGING_FACE_HUB_TOKEN
+# - OPENAI_API_KEY
+# - ANTHROPIC_API_KEY
+# - E2B_API_KEY
